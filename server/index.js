@@ -5,12 +5,34 @@ require('dotenv').config(); // To load environment variables from .env file
 const cors = require('cors');
 
 const app = express();
+
+// Trust the first proxy in front of the app (e.g., on Render)
+app.set('trust proxy', 1);
+
 // CORS Configuration
+const whitelist = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URL + '/'
+].filter(Boolean); // Filter out undefined values if FRONTEND_URL is not set
+
 const corsOptions = {
-    origin: process.env.NODE_ENV === 'production' 
-        ? process.env.FRONTEND_URL 
-        : 'http://localhost:3000',
-    optionsSuccessStatus: 200 // For legacy browser support
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+
+        // In development, always allow requests from localhost
+        if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) {
+            return callback(null, true);
+        }
+
+        // In production, check against the whitelist
+        if (whitelist.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
 
