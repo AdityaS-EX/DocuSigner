@@ -5,7 +5,15 @@ require('dotenv').config(); // To load environment variables from .env file
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+// CORS Configuration
+const corsOptions = {
+    origin: process.env.NODE_ENV === 'production' 
+        ? process.env.FRONTEND_URL 
+        : 'http://localhost:3000',
+    optionsSuccessStatus: 200 // For legacy browser support
+};
+app.use(cors(corsOptions));
+
 const PORT = process.env.PORT || 5000;
 
 // Middleware to parse JSON
