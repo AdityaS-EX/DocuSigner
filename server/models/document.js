@@ -9,14 +9,14 @@ const documentSchema = new mongoose.Schema({
         type: String,
         required: true,
     },
-    signedPath: {
-        type: String,
-    },
+
     user: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true,
     },
+    shareToken: String,
+    shareTokenExpires: Date,
 });
 
 const Document = mongoose.model('Document', documentSchema);

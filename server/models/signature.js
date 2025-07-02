@@ -9,7 +9,7 @@ const signatureSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    required: false, // Not required for public invitees
   },
   x: {
     type: Number,

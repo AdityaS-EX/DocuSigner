@@ -3,6 +3,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const Signature = require('../models/signature');
 const Document = require('../models/document');
+const util = require('util');
+const jwt = require('jsonwebtoken');
 
 // @desc    Create a new signature
 // @route   POST /api/signatures
@@ -178,4 +180,153 @@ exports.updateSignature = async (req, res) => {
     console.error('Error updating signature:', error);
     res.status(500).json({ message: 'Server error while updating signature.' });
   }
+};
+
+exports.addPublicSignature = async (req, res) => {
+    const { shareToken, x, y, page, text, font, color, fontSize } = req.body;
+
+    if (!shareToken) {
+        return res.status(401).json({ message: 'A share token is required.' });
+    }
+    
+    try {
+        // 1. Verify the share token to get the document ID
+        const decoded = await util.promisify(jwt.verify)(shareToken, process.env.JWT_SECRET);
+        const document = await Document.findOne({
+            _id: decoded.docId,
+            shareToken: shareToken,
+            shareTokenExpires: { $gt: Date.now() },
+        });
+
+        if (!document) {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+
+        // 2. Create the new signature, but without a userId
+        const newSignature = new Signature({
+            documentId: document._id,
+            // No userId for public signatures
+            x,
+            y,
+            page,
+            text: text || 'Signature',
+            font: font || 'Helvetica',
+            color: color || '#000000',
+            fontSize: fontSize || 24,
+        });
+
+        const savedSignature = await newSignature.save();
+
+        res.status(201).json({
+            message: 'Signature added successfully.',
+            signature: savedSignature,
+        });
+        
+    } catch (error) {
+        if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+        console.error('Error saving public signature:', error);
+        res.status(500).json({ message: 'Server error while saving signature.' });
+    }
+};
+
+exports.updatePublicSignature = async (req, res) => {
+    const { signatureId } = req.params;
+    const { shareToken, ...updateData } = req.body;
+
+    if (!shareToken) {
+        return res.status(401).json({ message: 'A share token is required.' });
+    }
+
+    try {
+        // 1. Verify the share token to get the document ID
+        const decoded = await util.promisify(jwt.verify)(shareToken, process.env.JWT_SECRET);
+        const document = await Document.findOne({ 
+            _id: decoded.docId, 
+            shareToken: shareToken,
+            shareTokenExpires: { $gt: Date.now() },
+        });
+
+        if (!document) {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+
+        // 2. Find the signature and ensure it belongs to the correct document
+        const signature = await Signature.findById(signatureId);
+        if (!signature || signature.documentId.toString() !== document._id.toString()) {
+            return res.status(404).json({ message: 'Signature not found or does not belong to this document.' });
+        }
+
+        // Public users can only update signatures that DON'T have a userId
+        if (signature.userId) {
+            return res.status(403).json({ message: 'You are not authorized to edit this signature.' });
+        }
+        
+        // 3. Apply updates and save
+        Object.assign(signature, updateData);
+        const updatedSignature = await signature.save();
+
+        res.status(200).json({
+            message: 'Signature updated successfully.',
+            signature: updatedSignature,
+        });
+
+    } catch (error) {
+        if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+        console.error('Error updating public signature:', error);
+        res.status(500).json({ message: 'Server error while updating signature.' });
+    }
+};
+
+exports.deletePublicSignature = async (req, res) => {
+    const { signatureId } = req.params;
+    // The shareToken must be passed in the request body for DELETE requests
+    const { shareToken } = req.body;
+
+    if (!shareToken) {
+        return res.status(401).json({ message: 'A share token is required.' });
+    }
+
+    try {
+        // 1. Verify the share token
+        const decoded = await util.promisify(jwt.verify)(shareToken, process.env.JWT_SECRET);
+        const document = await Document.findOne({ 
+            _id: decoded.docId,
+            shareToken: shareToken,
+        });
+
+        if (!document) {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+
+        // 2. Find the signature and verify it belongs to the document and is a public signature
+        const signature = await Signature.findOne({
+            _id: signatureId,
+            documentId: document._id,
+        });
+
+        if (!signature) {
+            return res.status(404).json({ message: 'Signature not found for this document.' });
+        }
+
+        // 3. CRITICAL CHECK: Ensure a public user cannot delete a signature made by the owner.
+        if (signature.userId) {
+            return res.status(403).json({ message: 'You are not authorized to delete this signature.' });
+        }
+
+        // 4. Delete the signature
+        await signature.deleteOne();
+
+        res.status(200).json({ message: 'Signature deleted successfully.' });
+
+    } catch (error) {
+        if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+            return res.status(403).json({ message: 'Invalid or expired share token.' });
+        }
+        console.error('Error deleting public signature:', error);
+        res.status(500).json({ message: 'Server error while deleting signature.' });
+    }
 };
