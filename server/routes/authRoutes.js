@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getProfile, forgotPassword, resetPassword } = require('../controllers/authController');
+const { register, login, getProfile, forgotPassword, resetPassword, updateProfile } = require('../controllers/authController');
 const { protect } = require('../middleware/auth'); // Import the protect middleware
 
 // @route   POST /api/auth/register
@@ -17,6 +17,7 @@ router.post('/login', login);
 // @desc    Get current user's profile
 // @access  Private
 router.get('/profile', protect, getProfile);
+router.put('/profile', protect, updateProfile);
 
 // @route   POST /api/auth/forgot-password
 // @desc    Initiate password reset

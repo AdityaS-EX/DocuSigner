@@ -20,7 +20,7 @@ exports.getAuditTrail = async (req, res) => {
     const logs = await Audit.find({ 
         documentId: docId,
         markedForDeletionAt: null 
-    }).populate('userId', 'username email').sort({ timestamp: -1 });
+    }).populate('userId', 'username name email').sort({ timestamp: -1 });
 
     res.status(200).json(logs);
   } catch (error) {

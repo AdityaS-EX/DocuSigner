@@ -193,6 +193,42 @@ exports.forgotPassword = async (req, res) => {
   }
 };
 
+// @desc    Update user profile
+// @route   PUT /api/auth/profile
+// @access  Private
+exports.updateProfile = async (req, res) => {
+  try {
+    // req.user is attached by the 'protect' middleware
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Update user fields
+    user.name = req.body.name || user.name;
+    if (req.body.email && req.body.email !== user.email) {
+      const existingUser = await User.findOne({ email: req.body.email });
+      if (existingUser) {
+        return res.status(400).json({ message: 'Email already in use' });
+      }
+      user.email = req.body.email;
+    }
+
+    const updatedUser = await user.save();
+
+    res.status(200).json({
+      id: updatedUser._id,
+      username: updatedUser.username,
+      name: updatedUser.name,
+      email: updatedUser.email,
+    });
+  } catch (error) {
+    console.error('Update profile error:', error.message);
+    res.status(500).json({ message: 'Server error while updating profile' });
+  }
+};
+
 // @desc    Reset password
 // @route   POST /api/auth/reset-password/:token
 // @access  Public
