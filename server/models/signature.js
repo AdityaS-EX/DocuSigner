@@ -45,6 +45,10 @@ const signatureSchema = new mongoose.Schema({
     default: 'pending',
     required: true,
   },
+  rejectionReason: {
+    type: String,
+    default: '',
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Signature', signatureSchema);

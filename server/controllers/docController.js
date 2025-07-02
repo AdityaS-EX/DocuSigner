@@ -10,6 +10,7 @@ const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
 // Note: The 'uploadsDir' variable is not needed here anymore as it's handled in the middleware.
 
+const Audit = require('../models/audit');
 // @desc    Upload a PDF document
 // @route   POST /api/docs/upload
 // @access  Private
@@ -21,6 +22,16 @@ exports.uploadDocument = async (req, res) => {
             user: req.user.id,
         });
         const savedDocument = await newDocument.save();
+        
+        // --- AUDIT LOG ---
+        await Audit.create({
+          documentId: savedDocument._id,
+          userId: req.user.id,
+          action: 'uploaded',
+          ip: req.ip,
+        });
+        // --- END AUDIT LOG ---
+
         res.status(201).json({
             message: 'File uploaded and metadata saved successfully!',
             document: savedDocument,
@@ -149,6 +160,15 @@ exports.deleteDocument = async (req, res) => {
         if (doc.signedPath) {
             await fs.promises.unlink(path.join(__dirname, '..', doc.signedPath)).catch(err => console.log("No signed file to delete, or error deleting:", err.message));
         }
+        
+        // --- AUDIT LOG ---
+        await Audit.create({
+          documentId: doc._id,
+          userId: req.user.id,
+          action: 'document_deleted',
+          ip: req.ip,
+        });
+        // --- END AUDIT LOG ---
 
         await Document.findByIdAndDelete(req.params.id);
         res.status(200).json({ message: 'Document deleted successfully.' });
@@ -166,7 +186,7 @@ exports.downloadSignedDocument = async (req, res) => {
         }
         // Anyone with the link can download, or add protect middleware for owner-only
         
-        const signatures = await Signature.find({ documentId: doc._id });
+        const signatures = await Signature.find({ documentId: doc._id, status: 'signed' });
 
         const pdfPath = path.join(__dirname, '..', doc.path);
         const existingPdfBytes = await fs.promises.readFile(pdfPath);
@@ -215,4 +235,27 @@ const hexToRgb = (hex) => {
         g: parseInt(result[2], 16),
         b: parseInt(result[3], 16)
     } : null;
+};
+
+// @desc    Get details for a single document
+// @route   GET /api/docs/details/:id
+// @access  Private
+exports.getDocumentDetails = async (req, res) => {
+    try {
+        const doc = await Document.findById(req.params.id);
+
+        if (!doc) {
+            return res.status(404).json({ message: 'Document not found.' });
+        }
+        
+        // Ensure the user owns the document
+        if (doc.user.toString() !== req.user.id) {
+            return res.status(403).json({ message: 'User not authorized to view this document.' });
+        }
+        
+        res.status(200).json(doc);
+    } catch (error) {
+        console.error('Error fetching document details:', error);
+        res.status(500).json({ message: 'Server error while fetching document details.' });
+    }
 };

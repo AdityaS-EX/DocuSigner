@@ -32,4 +32,16 @@ router.delete('/:signatureId', protect, deleteSignature);
 // PUT /api/signatures/:signatureId - Update a signature's position
 router.put('/:signatureId', protect, updateSignature);
 
+// PUT /api/signatures/accept/:signatureId - Accept a signature
+router.put('/accept/:signatureId', protect, (req, res, next) => {
+  req.body.status = 'signed';
+  next();
+}, updateSignature);
+
+// PUT /api/signatures/reject/:signatureId - Reject a signature
+router.put('/reject/:signatureId', protect, (req, res, next) => {
+  req.body.status = 'rejected';
+  next();
+}, updateSignature);
+
 module.exports = router;

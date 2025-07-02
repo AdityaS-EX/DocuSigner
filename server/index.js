@@ -24,11 +24,14 @@ const authRoutes = require('./routes/authRoutes');
 const docRoutes = require('./routes/docRoutes');
 // Import Signature Routes
 const signatureRoutes = require('./routes/signatureRoutes');
+// Import Audit Routes
+const auditRoutes = require('./routes/auditRoutes');
 
 // Route Middlewares
 app.use('/api/auth', authRoutes);
 app.use('/api/docs', docRoutes);
 app.use('/api/signatures', signatureRoutes);
+app.use('/api/audit', auditRoutes);
 
 // Serve static files from the 'uploads' directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));

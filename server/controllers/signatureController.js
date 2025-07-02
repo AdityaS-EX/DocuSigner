@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const Signature = require('../models/signature');
 const Document = require('../models/document');
+const Audit = require('../models/audit');
 const util = require('util');
 const jwt = require('jsonwebtoken');
 
@@ -50,6 +51,15 @@ exports.createSignature = async (req, res) => {
     });
 
     const savedSignature = await newSignature.save();
+    
+    // --- AUDIT LOG ---
+    await Audit.create({
+      documentId,
+      userId,
+      action: 'signed',
+      ip: req.ip,
+    });
+    // --- END AUDIT LOG ---
 
     res.status(201).json({
       message: 'Signature position saved successfully.',
@@ -116,18 +126,24 @@ const { signatureId } = req.params;
   }
 
   try {
-    // Atomically find a signature that matches the ID AND belongs to the user, then delete it.
-    // Explicitly cast to ObjectId to prevent any potential type mismatches.
-    const signature = await Signature.findOneAndDelete({ 
-      _id: new mongoose.Types.ObjectId(signatureId), 
-      userId: new mongoose.Types.ObjectId(userId) 
-    });
-
+    const signature = await Signature.findOne({ _id: signatureId });
     if (!signature) {
-      // If no document was found and deleted, it means either it didn't exist
-      // or it didn't belong to the user. In either case, it's a "Not Found" for this user.
-      return res.status(404).json({ message: 'Signature not found or user not authorized.' });
+      return res.status(404).json({ message: 'Signature not found.' });
     }
+    if (signature.userId.toString() !== userId) {
+      return res.status(403).json({ message: 'User not authorized to delete this signature.' });
+    }
+    
+    await signature.deleteOne();
+
+    // --- AUDIT LOG ---
+    await Audit.create({
+      documentId: signature.documentId,
+      userId: req.user.id,
+      action: 'signature_deleted',
+      ip: req.ip,
+    });
+    // --- END AUDIT LOG ---
 
     res.status(200).json({ message: 'Signature deleted successfully.' });
 
@@ -145,20 +161,19 @@ const { signatureId } = req.params;
 // @access  Private
 exports.updateSignature = async (req, res) => {
   const { signatureId } = req.params;
-  const { x, y, text, font, color, fontSize } = req.body; // Add fontSize
+  const { x, y, text, font, color, fontSize, status, rejectionReason } = req.body; // Add status and rejectionReason
   const userId = req.user.id;
-
-  // No specific fields are required, user can update any combination
   
   try {
-    const signature = await Signature.findById(signatureId);
+    const signature = await Signature.findById(signatureId).populate('documentId');;
 
     if (!signature) {
       return res.status(404).json({ message: 'Signature not found.' });
     }
 
-    if (signature.userId.toString() !== userId) {
-      return res.status(403).json({ message: 'User not authorized to update this signature.' });
+    // Check if the user is the document owner
+    if (signature.documentId.user.toString() !== userId) {
+        return res.status(403).json({ message: 'User not authorized to update this signature status.' });
     }
 
     // Update fields only if they are provided in the request body
@@ -168,9 +183,27 @@ exports.updateSignature = async (req, res) => {
     if (font != null) signature.font = font;
     if (color != null) signature.color = color;
     if (fontSize != null) signature.fontSize = fontSize; // Add fontSize update
+    if (status) {
+        signature.status = status;
+        // If the status is being changed to 'pending' or 'signed', clear the rejection reason.
+        if (status === 'pending' || status === 'signed') {
+            signature.rejectionReason = '';
+        }
+    }
+    if (rejectionReason) signature.rejectionReason = rejectionReason;
+
 
     const updatedSignature = await signature.save();
     
+    // --- AUDIT LOG ---
+    await Audit.create({
+      documentId: signature.documentId._id,
+      userId: req.user.id,
+      action: 'signature_updated',
+      ip: req.ip,
+    });
+    // --- END AUDIT LOG ---
+
     res.status(200).json({
       message: 'Signature updated successfully.',
       signature: updatedSignature,
@@ -216,6 +249,15 @@ exports.addPublicSignature = async (req, res) => {
         });
 
         const savedSignature = await newSignature.save();
+        
+        // --- AUDIT LOG ---
+        await Audit.create({
+          documentId: document._id,
+          action: 'signed', // Public user signed
+          ip: req.ip,
+          // userId is omitted for public users
+        });
+        // --- END AUDIT LOG ---
 
         res.status(201).json({
             message: 'Signature added successfully.',

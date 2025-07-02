@@ -3,6 +3,7 @@ const router = express.Router();
 const docController = require('../controllers/docController');
 const { protect } = require('../middleware/auth');
 const { uploadOriginal, uploadSigned } = require('../middleware/multerUpload');
+const auditLog = require('../middleware/audit');
 
 // --- Specific Routes First ---
 
@@ -28,17 +29,22 @@ router.get('/sign/:token', docController.getSigningDocument);
 // @route   POST /api/docs/:id/share
 // @desc    Share a document for signing via email
 // @access  Private
-router.post('/:id/share', protect, docController.shareDocument);
+router.post('/:id/share', protect, docController.shareDocument, auditLog('shared'));
 
 // @route   GET /api/docs/:id/download
 // @desc    Download the finalized PDF with all signatures
 // @access  Public
-router.get('/:id/download', docController.downloadSignedDocument);
+router.get('/:id/download', auditLog('downloaded'), docController.downloadSignedDocument);
 
 // @route   DELETE /api/docs/:id
 // @desc    Delete a document by its ID
 // @access  Private
 router.delete('/:id', protect, docController.deleteDocument);
+
+// @route   GET /api/docs/details/:id
+// @desc    Get details for a single document
+// @access  Private
+router.get('/details/:id', protect, docController.getDocumentDetails);
 
 
 module.exports = router;
