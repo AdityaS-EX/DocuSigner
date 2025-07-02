@@ -1,47 +1,41 @@
 
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 
 const sendEmail = async (options) => {
-    // For development, if no real SMTP server is configured, we can use a mock.
-    // If EMAIL_HOST is not configured in the .env file, use a mock for development.
-    if (!process.env.EMAIL_HOST) {
-        console.log('--- MOCK EMAIL (No EMAIL_HOST configured in .env) ---');
+    // Set the SendGrid API key
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+    // If no API key is set, fallback to mock for local development
+    if (!process.env.SENDGRID_API_KEY) {
+        console.log('--- MOCK EMAIL (No SENDGRID_API_KEY configured in .env) ---');
         console.log(`To: ${options.email}`);
         console.log(`Subject: ${options.subject}`);
         console.log(`Message: ${options.message}`);
         console.log('------------------');
-        return Promise.resolve(); // Mock success
+        return; // Mock success
     }
 
-    // 1) Create a transporter
-    const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST,
-        port: process.env.EMAIL_PORT,
-        auth: {
-            user: process.env.EMAIL_USERNAME,
-            pass: process.env.EMAIL_PASSWORD,
-        },
-        // Note: For services like Gmail, you might need to configure "less secure apps"
-        // or use OAuth2. For production, a transactional email service is better.
-    });
-
-    // 2) Define the email options
-    const mailOptions = {
-        from: process.env.EMAIL_FROM || 'DocuSigner <noreply@docusigner.com>',
+    const msg = {
         to: options.email,
+        from: process.env.EMAIL_FROM || 'noreply@yourverifieddomain.com', // This MUST be a verified sender in SendGrid
         subject: options.subject,
         text: options.message,
-        // html: options.html // You can also pass HTML content
+        // You can also add an html property for rich text emails
+        // html: '<strong>and easy to do anywhere, even with Node.js</strong>',
     };
 
-    // 3) Actually send the email
     try {
-        await transporter.sendMail(mailOptions);
+        await sgMail.send(msg);
+        console.log('Email sent successfully via SendGrid');
     } catch (error) {
-        console.error("Failed to send email:", error);
-        // Depending on the app's needs, you might want to throw the error
-        // to be handled by the calling function.
-        throw new Error('Email could not be sent.');
+        console.error('Error sending email via SendGrid:', error);
+
+        // Log additional details from the error object if available
+        if (error.response) {
+            console.error(error.response.body);
+        }
+        
+        throw new Error('Email could not be sent. Please try again later.');
     }
 };
 

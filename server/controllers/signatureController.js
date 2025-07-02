@@ -165,15 +165,25 @@ exports.updateSignature = async (req, res) => {
   const userId = req.user.id;
   
   try {
-    const signature = await Signature.findById(signatureId).populate('documentId');;
+    const signature = await Signature.findById(signatureId).populate('documentId');
 
     if (!signature) {
       return res.status(404).json({ message: 'Signature not found.' });
     }
 
-    // Check if the user is the document owner
-    if (signature.documentId.user.toString() !== userId) {
-        return res.status(403).json({ message: 'User not authorized to update this signature status.' });
+    const isDocumentOwner = signature.documentId.user.toString() === userId;
+    const isSignatureOwner = signature.userId ? signature.userId.toString() === userId : false;
+
+    // --- Authorization Logic ---
+    // An action is permitted if the user is the document owner OR the signature creator.
+    if (!isDocumentOwner && !isSignatureOwner) {
+        return res.status(403).json({ message: 'You are not authorized to modify this signature.' });
+    }
+    
+    // A non-document-owner cannot change the status (accept/reject).
+    // This check is now more specific: it only triggers if the status is actually being changed.
+    if (!isDocumentOwner && status && signature.status !== status) {
+        return res.status(403).json({ message: 'Only the document owner can change the signature status.' });
     }
 
     // Update fields only if they are provided in the request body

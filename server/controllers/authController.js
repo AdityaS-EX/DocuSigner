@@ -168,31 +168,24 @@ exports.forgotPassword = async (req, res) => {
     // Create the reset URL for the frontend
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-    // --- Development Only: Log the link to the console ---
-    // In production, you would use a service like Nodemailer to send an email.
-    console.log('------------------------------------');
-    console.log('PASSWORD RESET LINK (FOR DEV ONLY):');
-    console.log(resetUrl);
-    console.log('------------------------------------');
-
-    /* 
-    // Example of what a real email implementation might look like:
     try {
+        const sendEmail = require('../utils/email'); // Require the email utility
         await sendEmail({
-            to: user.email,
+            email: user.email, // The utility expects 'email' not 'to'
             subject: 'Password Reset Request',
-            text: `You are receiving this email because you (or someone else) have requested the reset of a password. Please click on the following link, or paste this into your browser to complete the process within 15 minutes: \n\n ${resetUrl}`
+            message: `You are receiving this email because you (or someone else) have requested the reset of a password. Please use the following link, which is valid for 15 minutes, to complete the process:\n\n${resetUrl}`
         });
+
+        res.status(200).json({ message: 'If a user with that email exists, a password reset link has been sent.' });
+
     } catch (err) {
         console.error("Email sending error:", err);
+        // If email fails, we must clear the token so the user can try again
         user.passwordResetToken = undefined;
         user.passwordResetExpires = undefined;
-        await user.save();
-        return res.status(500).json({ message: 'Error sending password reset email.' });
+        await user.save(); // Consider if this save needs validation
+        return res.status(500).json({ message: 'Error sending password reset email. Please try again.' });
     }
-    */
-
-    res.status(200).json({ message: 'If a user with that email exists, a password reset link has been sent.' });
 
   } catch (error) {
     console.error('Forgot password error:', error);

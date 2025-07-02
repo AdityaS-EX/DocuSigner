@@ -16,11 +16,20 @@ const Audit = require('../models/audit');
 // @access  Private
 exports.uploadDocument = async (req, res) => {
     try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No file uploaded.' });
+        }
+
+        // Manually construct the correct "raw" file URL
+        const correctUrl = `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/raw/upload/${req.file.filename}`;
+
         const newDocument = new Document({
-            filename: req.file.filename,
-            path: path.join('uploads', req.file.filename),
+            filename: req.file.originalname,
+            path: correctUrl, // Use the correctly constructed URL
             user: req.user.id,
+            cloudinaryPublicId: req.file.filename
         });
+
         const savedDocument = await newDocument.save();
         
         // --- AUDIT LOG ---
@@ -33,14 +42,17 @@ exports.uploadDocument = async (req, res) => {
         // --- END AUDIT LOG ---
 
         res.status(201).json({
-            message: 'File uploaded and metadata saved successfully!',
+            message: 'File uploaded to Cloudinary and metadata saved successfully!',
             document: savedDocument,
         });
     } catch (dbError) {
         console.error('Error saving document metadata to DB:', dbError);
-        fs.unlink(req.file.path, (unlinkErr) => {
-            if (unlinkErr) console.error('Error deleting orphaned file:', unlinkErr);
-        });
+        // If DB save fails, we should ideally delete the uploaded file from Cloudinary
+        if (req.file) {
+            // This requires cloudinary object to be available here
+            // cloudinary.uploader.destroy(req.file.filename); 
+            console.error('An orphaned file may exist in Cloudinary:', req.file.filename);
+        }
         res.status(500).json({ message: 'Error saving document metadata. Please try again.' });
     }
 };
@@ -60,83 +72,69 @@ exports.getUserDocuments = async (req, res) => {
     }
 };
 
-// @desc    Share a document for signing via email
+const User = require('../models/user'); // Make sure User model is available
+
+// @desc    Share a document with another registered user
 // @route   POST /api/docs/:id/share
 // @access  Private
-exports.shareDocument = async (req, res) => {
+exports.shareDocument = async (req, res, next) => {
     try {
         const { email } = req.body;
+        const docId = req.params.id;
+
         if (!email) {
             return res.status(400).json({ message: 'Recipient email is required.' });
         }
-        const doc = await Document.findById(req.params.id);
+
+        const [doc, userToShareWith] = await Promise.all([
+            Document.findById(docId),
+            User.findOne({ email: email })
+        ]);
+
         if (!doc) {
             return res.status(404).json({ message: 'Document not found.' });
         }
         if (doc.user.toString() !== req.user.id) {
             return res.status(403).json({ message: 'You are not authorized to share this document.' });
         }
-        const token = jwt.sign({ docId: doc._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        doc.shareToken = token;
-        doc.shareTokenExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-        await doc.save({ validateBeforeSave: false });
+        if (!userToShareWith) {
+            return res.status(404).json({ message: `User with email ${email} not found. Please ask them to register first.` });
+        }
+        if (userToShareWith._id.toString() === req.user.id) {
+            return res.status(400).json({ message: 'You cannot share a document with yourself.' });
+        }
+        if (doc.sharedWith.includes(userToShareWith._id)) {
+            return res.status(400).json({ message: `This document is already shared with ${email}.` });
+        }
 
+        doc.sharedWith.push(userToShareWith._id);
+        await doc.save();
+
+        // Send a notification email instead of a magic link
         const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-        const signUrl = `${frontendUrl}/sign/${token}`;
-        const message = `You have been invited to sign a document. Please use the following link, which is valid for 24 hours:\n\n${signUrl}`;
+        const message = `The document "${doc.filename}" has been shared with you by ${req.user.name}. Please log in to your DocuSigner account to view and sign it under the "Shared With Me" section.\n\n${frontendUrl}/login`;
 
         await sendEmail({
-            email: email,
-            subject: `Invitation to sign: ${doc.filename}`,
+            email: userToShareWith.email,
+            subject: `A document has been shared with you: ${doc.filename}`,
             message,
         });
+        
+        // Pass to audit middleware
+        req.auditDetails = {
+            sharedWithUserId: userToShareWith._id
+        };
+        next();
 
-        res.status(200).json({ message: `An invitation to sign has been sent to ${email}.` });
     } catch (error) {
         console.error('Error sharing document:', error);
-        if (error.message.includes('Email could not be sent')) {
-            return res.status(502).json({ message: 'The email service failed. Please try again later.' });
-        }
-        res.status(500).json({ message: 'An internal server error occurred.' });
+        res.status(500).json({ message: 'An internal server error occurred during the sharing process.' });
     }
 };
 
-// @desc    Access a document for signing with a token
-// @route   GET /api/docs/sign/:token
-// @access  Public
-exports.getSigningDocument = async (req, res) => {
-    try {
-        const { token } = req.params;
-        const decoded = await util.promisify(jwt.verify)(token, process.env.JWT_SECRET);
-        const doc = await Document.findOne({
-            _id: decoded.docId,
-            shareToken: token,
-            shareTokenExpires: { $gt: Date.now() },
-        });
-        if (!doc) {
-            return res.status(400).json({ message: 'Signing link is invalid or has expired.' });
-        }
-        
-        // Also fetch existing signatures for this document
-        const signatures = await Signature.find({ documentId: doc._id });
-
-        res.status(200).json({
-            message: 'Document ready for signing.',
-            document: {
-                id: doc._id,
-                filename: doc.filename,
-                path: doc.path,
-            },
-            signatures: signatures,
-        });
-    } catch (error) {
-        if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-            return res.status(401).json({ message: 'Signing link is invalid or has expired.' });
-        }
-        console.error('Error getting signing document:', error);
-        res.status(500).json({ message: 'An internal server error occurred.' });
-    }
-};
+// This entire function is now deprecated by the new "shared" workflow.
+// I am leaving it here, commented out, for reference, but it should not be used.
+// exports.getSigningDocument = async (req, res) => { ... };
 
 
 
@@ -152,13 +150,14 @@ exports.deleteDocument = async (req, res) => {
         if (doc.user.toString() !== req.user.id) {
             return res.status(403).json({ message: 'Unauthorized.' });
         }
-        
-        // Use fs.promises for async/await pattern
-        await fs.promises.unlink(path.join(__dirname, '..', doc.path));
-        
-        // Also delete the signed version if it exists
-        if (doc.signedPath) {
-            await fs.promises.unlink(path.join(__dirname, '..', doc.signedPath)).catch(err => console.log("No signed file to delete, or error deleting:", err.message));
+
+        // Delete the file from Cloudinary, specifying 'raw' for non-image files like PDFs
+        if (doc.cloudinaryPublicId) {
+            const { cloudinary } = require('../utils/cloudinary');
+            await cloudinary.uploader.destroy(doc.cloudinaryPublicId, { resource_type: 'raw' });
+        } else {
+            // Fallback for older documents that might not have a public ID
+            console.log(`Document ${doc._id} in DB but might not be on Cloudinary or lacks a public ID.`);
         }
         
         // --- AUDIT LOG ---
@@ -171,12 +170,14 @@ exports.deleteDocument = async (req, res) => {
         // --- END AUDIT LOG ---
 
         await Document.findByIdAndDelete(req.params.id);
-        res.status(200).json({ message: 'Document deleted successfully.' });
+        res.status(200).json({ message: 'Document and associated files deleted successfully.' });
     } catch (error) {
         console.error('Error deleting document:', error);
         res.status(500).json({ message: 'Server error while deleting the document.' });
     }
 };
+
+const fetch = require('node-fetch');
 
 exports.downloadSignedDocument = async (req, res) => {
     try {
@@ -184,12 +185,16 @@ exports.downloadSignedDocument = async (req, res) => {
         if (!doc) {
             return res.status(404).json({ message: 'Document not found.' });
         }
-        // Anyone with the link can download, or add protect middleware for owner-only
         
         const signatures = await Signature.find({ documentId: doc._id, status: 'signed' });
 
-        const pdfPath = path.join(__dirname, '..', doc.path);
-        const existingPdfBytes = await fs.promises.readFile(pdfPath);
+        // Fetch the PDF from Cloudinary URL
+        const pdfUrl = doc.path;
+        const response = await fetch(pdfUrl);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch PDF from Cloudinary: ${response.statusText}`);
+        }
+        const existingPdfBytes = await response.arrayBuffer();
         
         const pdfDoc = await PDFDocument.load(existingPdfBytes);
         const pages = pdfDoc.getPages();
@@ -257,5 +262,21 @@ exports.getDocumentDetails = async (req, res) => {
     } catch (error) {
         console.error('Error fetching document details:', error);
         res.status(500).json({ message: 'Server error while fetching document details.' });
+    }
+};
+
+// @desc    Get all documents shared with the authenticated user
+// @route   GET /api/docs/shared
+// @access  Private
+exports.getSharedDocuments = async (req, res) => {
+    try {
+        const documents = await Document.find({ sharedWith: req.user.id })
+            .populate('user', 'name email') // Populate owner's info
+            .sort({ createdAt: -1 });
+            
+        res.status(200).json(documents);
+    } catch (error) {
+        console.error('Error fetching shared documents:', error);
+        res.status(500).json({ message: 'Server error while fetching shared documents.' });
     }
 };
